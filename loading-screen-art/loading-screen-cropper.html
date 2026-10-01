@@ -147,12 +147,12 @@ textarea { width: 100%; min-height: 160px; font: 12.5px/1.5 var(--mono); color: 
     </div>
   </div>
   <div class="crop" id="cropbar">
-    <label for="zoom">Zoom <input id="zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
+    <label for="zoom">Zoom <input id="zoom" type="range" min="0.4" max="3" step="0.01" value="1"></label>
     <button type="button" class="btn" id="crop-reset">Reset crop</button>
     <button type="button" class="btn" id="crop-export">Save 1920x1080 PNG</button>
     <span class="readout" id="readout"></span>
   </div>
-  <p class="note"><b>Cropping:</b> drag the screen to move the art, use the slider or your mouse wheel to zoom. The numbers are the crop in the art's own pixels, so they can go straight into the game. Saving the PNG works when you open the file on your computer; the hosted page blocks downloads.</p>
+  <p class="note"><b>Cropping:</b> drag the screen to move the art, use the slider or your mouse wheel to zoom. Zoom out far enough and the whole card shows, with a blurred copy of the art filling the sides. The numbers are the crop in the art's own pixels, so they can go straight into the game. Saving the PNG works when you open the file on your computer; the hosted page blocks downloads.</p>
   <p class="note"><b>About the art:</b> this is the full-resolution Bullseye Bounty Hunter art (Zed Edge, 1572 x 2193) from CCG_209.psd. The art is a tall card, so <b>full screen</b> crops it to her face and shoulders the way the game crops a background, and <b>framed</b> shows the whole card over a blurred copy of itself.</p>
 
   <section class="sheet" aria-labelledby="sheet-title">
@@ -353,11 +353,13 @@ const crop = { src: null, W: 1, H: 1, z: 1, cx: 0, cy: 0, def: null };
 function cropLoad(src, def) {
   crop.src = src; crop.def = def;
   const im = new Image();
-  im.onload = () => { crop.W = im.naturalWidth; crop.H = im.naturalHeight; cropimg.src = src; cropReset(); };
+  im.onload = () => { crop.W = im.naturalWidth; crop.H = im.naturalHeight; cropimg.src = src; $("blur").style.backgroundImage = "url(" + src + ")"; $("zoom").min = minZoom().toFixed(3); cropReset(); };
   im.src = src;
 }
+function minZoom() { const s0 = Math.max(16 / crop.W, 9 / crop.H); return Math.min(1, Math.min(16 / crop.W, 9 / crop.H) / s0); }
 function vis() { const s0 = Math.max(16 / crop.W, 9 / crop.H) * crop.z; return { s: s0, cw: 16 / s0, ch: 9 / s0 }; }
-function clampCrop() { const v = vis(); crop.cx = Math.max(0, Math.min(crop.W - v.cw, crop.cx)); crop.cy = Math.max(0, Math.min(crop.H - v.ch, crop.cy)); }
+function clampAxis(c, size, view) { return view >= size ? (size - view) / 2 : Math.max(0, Math.min(size - view, c)); }
+function clampCrop() { const v = vis(); crop.cx = clampAxis(crop.cx, crop.W, v.cw); crop.cy = clampAxis(crop.cy, crop.H, v.ch); $("blur").hidden = !(v.cw > crop.W + 0.5 || v.ch > crop.H + 0.5); }
 function cropRender() {
   clampCrop(); const v = vis();
   cropimg.style.width = (crop.W * v.s / 16 * 100) + "%";
@@ -369,7 +371,7 @@ function cropRender() {
 function cropReset() { crop.z = 1; const v = vis(); crop.cx = (crop.W - v.cw) / 2; crop.cy = crop.def != null ? crop.def * crop.H : (crop.H - v.ch) / 2; cropRender(); }
 function zoomAt(z, fx, fy) {
   const v0 = vis(); const px = crop.cx + fx * v0.cw, py = crop.cy + fy * v0.ch;
-  crop.z = Math.max(1, Math.min(3, z)); const v1 = vis();
+  crop.z = Math.max(minZoom(), Math.min(3, z)); const v1 = vis();
   crop.cx = px - fx * v1.cw; crop.cy = py - fy * v1.ch; cropRender();
 }
 $("zoom").addEventListener("input", e => zoomAt(+e.target.value, .5, .5));
@@ -384,7 +386,10 @@ stageEl.addEventListener("wheel", e => { if (!stageEl.classList.contains("croppi
   zoomAt(crop.z * (e.deltaY < 0 ? 1.06 : 1 / 1.06), (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); }, { passive: false });
 $("crop-export").addEventListener("click", () => {
   const c = document.createElement("canvas"); c.width = 1920; c.height = 1080; const v = vis();
-  const im = new Image(); im.onload = () => { c.getContext("2d").drawImage(im, crop.cx, crop.cy, v.cw, v.ch, 0, 0, 1920, 1080);
+  const im = new Image(); im.onload = () => { const g = c.getContext("2d"), k = 1920 / v.cw;
+    if (!$("blur").hidden) { const cs = Math.max(1920 / crop.W, 1080 / crop.H) * 1.08; g.filter = "blur(36px) brightness(0.55) saturate(1.1)";
+      g.drawImage(im, (1920 - crop.W * cs) / 2, (1080 - crop.H * cs) / 2, crop.W * cs, crop.H * cs); g.filter = "none"; }
+    g.drawImage(im, -crop.cx * k, -crop.cy * k, crop.W * k, crop.H * k);
     c.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "loading-bg-1920x1080.png"; document.body.appendChild(a); a.click(); a.remove(); }, "image/png"); };
   im.src = crop.src;
 });
@@ -393,7 +398,7 @@ function setArt(which) {
   ["art-bullseye", "art-framed", "art-current", "art-upload-btn"].forEach(b => $(b).setAttribute("aria-pressed", "false"));
   const blur = $("blur");
   blur.hidden = true; hero.hidden = true; art.hidden = false; cropimg.hidden = true; stageEl.classList.remove("cropping"); $("cropbar").hidden = true;
-  const useCrop = (src, def) => { art.hidden = true; cropimg.hidden = false; stageEl.classList.add("cropping"); $("cropbar").hidden = false; if (crop.src !== src) cropLoad(src, def); else cropRender(); };
+  const useCrop = (src, def) => { art.hidden = true; cropimg.hidden = false; stageEl.classList.add("cropping"); $("cropbar").hidden = false; if (crop.src !== src) cropLoad(src, def); else { $("blur").style.backgroundImage = "url(" + src + ")"; cropRender(); } };
   if (which === "upload" && uploaded) { useCrop(uploaded, null); $("art-upload-btn").setAttribute("aria-pressed", "true"); }
   else if (which === "current") { art.style.backgroundImage = "url(" + BG + ")"; $("art-current").setAttribute("aria-pressed", "true"); }
   else if (which === "framed") { art.hidden = true; blur.style.backgroundImage = "url(" + CARD + ")"; blur.hidden = false; hero.style.backgroundImage = "url(" + CARD + ")"; hero.hidden = false; $("art-framed").setAttribute("aria-pressed", "true"); }
